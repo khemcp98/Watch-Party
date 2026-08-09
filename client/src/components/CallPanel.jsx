@@ -8,6 +8,8 @@ export default function CallPanel({ roomId, name }) {
   const [micOn, setMicOn] = useState(false);
   const [screenSharing, setScreenSharing] = useState(false);
   const [peerReady, setPeerReady] = useState(false);
+  const [peerStatus, setPeerStatus] = useState('connecting'); // 'connecting' | 'ready' | 'error' | 'disconnected'
+  const [peerErrorMsg, setPeerErrorMsg] = useState(null);
 
   const peerRef = useRef(null);
   const localStreamRef = useRef(null);
@@ -32,31 +34,59 @@ export default function CallPanel({ roomId, name }) {
       });
     }
 
+    console.log('[call] initializing PeerJS connection to broker...');
     const peer = new Peer(undefined, {
-      debug: 1,
+      debug: 2,
       config: { iceServers },
     });
     peerRef.current = peer;
 
+    // Hard timeout: if PeerJS hasn't opened within 8s, something's wrong
+    // with reaching the broker (network/firewall) — surface it visibly
+    // instead of leaving the user staring at silence.
+    const openTimeout = setTimeout(() => {
+      if (peerRef.current && peerRef.current.open === false) {
+        console.error('[call] PeerJS did not open within 8s — likely blocked by network/firewall.');
+        setPeerStatus('error');
+        setPeerErrorMsg('Call service is taking too long to connect. Your network may be blocking it.');
+      }
+    }, 8000);
+
     peer.on('open', (id) => {
+      clearTimeout(openTimeout);
+      console.log('[call] PeerJS connected, my peer id:', id);
       setPeerReady(true);
+      setPeerStatus('ready');
       socket.emit('webrtc-ready', { roomId, peerId: id });
     });
 
     peer.on('error', (err) => {
-      console.error('PeerJS error:', err);
+      console.error('[call] PeerJS error:', err.type, err.message || err);
+      setPeerStatus('error');
+      setPeerErrorMsg(`Call error: ${err.type || err.message || 'unknown'}`);
+    });
+
+    peer.on('disconnected', () => {
+      console.warn('[call] PeerJS disconnected from broker, attempting reconnect...');
+      setPeerStatus('disconnected');
+      peer.reconnect();
     });
 
     // Someone is calling us — answer with whatever stream we currently have
     // (camera/mic stream, or empty if we haven't turned anything on yet).
     peer.on('call', (call) => {
+      console.log('[call] incoming call from', call.peer);
       const isScreenShareCall = call.metadata?.type === 'screen';
       const stream = isScreenShareCall ? null : localStreamRef.current;
       call.answer(stream || new MediaStream());
       call.on('stream', (remoteStream) => {
+        console.log('[call] received remote stream from', call.peer);
         const socketId = knownPeers.current[call.peer] || call.peer;
         setRemoteStreams((prev) => ({ ...prev, [socketId]: remoteStream }));
       });
+      call.on('error', (err) => console.error('[call] incoming call error:', err));
+      call.on('close', () => console.log('[call] call closed with', call.peer));
+      logIceState(call, call.peer);
       if (isScreenShareCall) {
         screenCallsRef.current[call.peer] = call;
       } else {
@@ -65,18 +95,47 @@ export default function CallPanel({ roomId, name }) {
     });
 
     return () => {
+      clearTimeout(openTimeout);
       peer.destroy();
     };
   }, [roomId]);
 
+  // Logs ICE connection state transitions for a call — this is the single
+  // most useful signal for "why can't we connect": 'checking' -> 'connected'
+  // is success; stuck on 'checking' or going to 'failed' means the network
+  // (often mobile carrier NAT) is blocking a direct peer connection and a
+  // TURN server is needed (see README "Scaling up").
+  const logIceState = (call, peerId) => {
+    const attachWhenReady = () => {
+      const pc = call.peerConnection;
+      if (!pc) {
+        setTimeout(attachWhenReady, 200);
+        return;
+      }
+      pc.oniceconnectionstatechange = () => {
+        console.log(`[call] ICE state with ${peerId}:`, pc.iceConnectionState);
+        if (pc.iceConnectionState === 'failed') {
+          console.error(
+            `[call] Connection to ${peerId} FAILED — likely blocked by a restrictive network (NAT/firewall). A TURN server is usually required to fix this reliably. See README "Scaling up".`
+          );
+        }
+      };
+    };
+    attachWhenReady();
+  };
+
   const callPeer = useCallback((theirPeerId, socketId, stream) => {
     const peer = peerRef.current;
     if (!peer) return;
+    console.log('[call] calling', theirPeerId);
     callsRef.current[theirPeerId]?.close();
     const call = peer.call(theirPeerId, stream || new MediaStream());
     call.on('stream', (remoteStream) => {
+      console.log('[call] received remote stream from', theirPeerId);
       setRemoteStreams((prev) => ({ ...prev, [socketId]: remoteStream }));
     });
+    call.on('error', (err) => console.error('[call] outgoing call error:', err));
+    logIceState(call, theirPeerId);
     callsRef.current[theirPeerId] = call;
   }, []);
 
@@ -225,7 +284,14 @@ export default function CallPanel({ roomId, name }) {
 
   return (
     <div className="call-panel">
-      {!peerReady && <p className="call-status">Connecting call service...</p>}
+      {peerStatus === 'connecting' && <p className="call-status">Connecting call service...</p>}
+      {peerStatus === 'disconnected' && <p className="call-status warn">Reconnecting to call service...</p>}
+      {peerStatus === 'error' && (
+        <p className="call-status error">
+          {peerErrorMsg || 'Call service failed to connect.'} Open the browser console for details, or
+          try again on a different network.
+        </p>
+      )}
       <div className="call-controls">
         <button onClick={toggleMic} className={micOn ? 'active' : ''} disabled={!peerReady}>
           {micOn ? '🎤 Mic On' : '🎤 Mic Off'}
