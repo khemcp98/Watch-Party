@@ -54,7 +54,9 @@ export function useYouTubeAdapter({ videoId, onLocalStateChange, suppressRef }) 
   const pause = useCallback(() => playerRef.current?.pauseVideo?.(), []);
   const seekTo = useCallback((time) => playerRef.current?.seekTo?.(time, true), []);
   const getCurrentTime = useCallback(() => playerRef.current?.getCurrentTime?.() ?? 0, []);
+  const getDuration = useCallback(() => playerRef.current?.getDuration?.() ?? 0, []);
+  const setVolume = useCallback((pct) => playerRef.current?.setVolume?.(pct), []);
   const isReady = useCallback(() => ready && typeof playerRef.current?.getCurrentTime === 'function', [ready]);
 
-  return { containerRef, play, pause, seekTo, getCurrentTime, isReady, ready };
+  return { containerRef, play, pause, seekTo, getCurrentTime, getDuration, setVolume, isReady, ready };
 }

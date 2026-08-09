@@ -4,6 +4,7 @@ import { useVolumeBoost } from '../lib/useVolumeBoost';
 import { useHtml5Adapter } from '../lib/html5Adapter';
 import { useYouTubeAdapter } from '../lib/youtubeAdapter';
 import { socket } from '../lib/socket';
+import PlayerControls from './PlayerControls';
 
 const SYNC_TOLERANCE = 1; // seconds of drift allowed before force-resync
 const RESYNC_INTERVAL = 5000;
@@ -11,16 +12,19 @@ const RESYNC_INTERVAL = 5000;
 export default function UnifiedPlayer({ roomId, videoUrl, videoType, initialTime, initialPlaying }) {
   const [useIframeFallback, setUseIframeFallback] = useState(false);
   const [loadError, setLoadError] = useState(null);
+  const [isPlaying, setIsPlaying] = useState(false);
   const suppressEmit = useRef(false);
 
   const parsed = videoUrl ? parseVideoUrl(videoUrl) : null;
   const source = parsed?.type; // 'youtube' | 'drive' | 'direct'
+  const usingIframeFallback = source !== 'youtube' && useIframeFallback && parsed?.type === 'drive';
 
   // --- Adapters: exactly one is "active" depending on source ---
   const html5 = useHtml5Adapter();
 
   const handleYouTubeLocalChange = useCallback(
     (type, currentTime) => {
+      setIsPlaying(type === 'play');
       console.log(`[client] emitting playback-event (youtube): ${type} @ ${currentTime?.toFixed?.(1)}s`);
       socket.emit('playback-event', { roomId, type, currentTime });
     },
@@ -32,12 +36,13 @@ export default function UnifiedPlayer({ roomId, videoUrl, videoType, initialTime
     suppressRef: suppressEmit,
   });
 
-  // Pick the active adapter's uniform interface. Everything below this
-  // point only talks to `active` — it never needs to know the source type.
+  // Pick the active adapter's uniform interface. The control bar and sync
+  // engine only ever talk to `active` — never to a source-specific API.
   const active = source === 'youtube' ? youtube : html5;
 
   // Volume boost only applies to the html5 <video> path (YouTube/Drive-iframe
-  // don't expose raw audio to embedders).
+  // don't expose raw audio to embedders) — the control bar still renders a
+  // volume icon for every source, just non-boosted for YouTube.
   const {
     gain,
     setGain,
@@ -48,7 +53,18 @@ export default function UnifiedPlayer({ roomId, videoUrl, videoType, initialTime
     maxGain,
   } = useVolumeBoost(html5.videoRef, { maxGain: 4 });
 
-  const volumeBoostAvailable = source !== 'youtube' && !useIframeFallback;
+  // For YouTube we can't boost past 100%, but we still want a working
+  // volume control in the same slot in the control bar — map it to
+  // YouTube's own 0-100 volume API instead of the Web Audio gain node.
+  const setYoutubeVolume = useCallback(
+    (v) => {
+      // v arrives as a 0..maxGain float from the shared slider; clamp to
+      // YouTube's 0-100 range (values above 1x gain have no effect here).
+      const pct = Math.min(1, v) * 100;
+      youtube.setVolume?.(pct);
+    },
+    [youtube]
+  );
 
   // Apply initial state once the active player is ready (e.g. joining mid-playback)
   useEffect(() => {
@@ -58,7 +74,10 @@ export default function UnifiedPlayer({ roomId, videoUrl, videoType, initialTime
       if (active.isReady()) {
         suppressEmit.current = true;
         if (initialTime) active.seekTo(initialTime);
-        if (initialPlaying) active.play();
+        if (initialPlaying) {
+          active.play();
+          setIsPlaying(true);
+        }
         setTimeout(() => (suppressEmit.current = false), 300);
       } else if (attempts < 40) {
         attempts += 1;
@@ -79,8 +98,14 @@ export default function UnifiedPlayer({ roomId, videoUrl, videoType, initialTime
       const drift = Math.abs(active.getCurrentTime() - currentTime);
       if (drift > SYNC_TOLERANCE) active.seekTo(currentTime);
 
-      if (type === 'play') active.play();
-      if (type === 'pause') active.pause();
+      if (type === 'play') {
+        active.play();
+        setIsPlaying(true);
+      }
+      if (type === 'pause') {
+        active.pause();
+        setIsPlaying(false);
+      }
       if (type === 'seek') active.seekTo(currentTime);
 
       setTimeout(() => (suppressEmit.current = false), 250);
@@ -113,9 +138,9 @@ export default function UnifiedPlayer({ roomId, videoUrl, videoType, initialTime
     return () => clearInterval(interval);
   }, [roomId]);
 
-  // Emits from the html5 <video> element's native events (play/pause/seeked).
-  // YouTube emits via handleYouTubeLocalChange instead, since it doesn't
-  // expose native DOM events.
+  // html5 <video> native events still fire (element is in the DOM, just
+  // stripped of its native chrome) — used to catch play/pause/seek from
+  // keyboard shortcuts or programmatic changes, in addition to our buttons.
   const emitHtml5Playback = useCallback(
     (type) => {
       if (suppressEmit.current) return;
@@ -125,6 +150,29 @@ export default function UnifiedPlayer({ roomId, videoUrl, videoType, initialTime
     },
     [roomId, html5]
   );
+
+  const handleTogglePlay = () => {
+    if (isPlaying) {
+      active.pause();
+      setIsPlaying(false);
+      if (source !== 'youtube') emitHtml5Playback('pause');
+      else handleYouTubeLocalChange('pause', active.getCurrentTime());
+    } else {
+      active.play();
+      setIsPlaying(true);
+      if (source !== 'youtube') emitHtml5Playback('play');
+      else handleYouTubeLocalChange('play', active.getCurrentTime());
+    }
+  };
+
+  const handleSeek = (time) => {
+    active.seekTo(time);
+    if (source !== 'youtube') {
+      emitHtml5Playback('seek');
+    } else {
+      socket.emit('playback-event', { roomId, type: 'seek', currentTime: time });
+    }
+  };
 
   const handleFirstInteraction = () => ensureGraph();
 
@@ -137,36 +185,36 @@ export default function UnifiedPlayer({ roomId, videoUrl, videoType, initialTime
   }
 
   return (
-    <div className="player-shell">
-      {source === 'youtube' && (
-        <div className="video-wrap youtube-wrap">
+    <div className="player-shell" onClickCapture={handleFirstInteraction}>
+      <div className="video-wrap">
+        {source === 'youtube' && (
           <div ref={youtube.containerRef} className="youtube-iframe-target" />
-          {!youtube.ready && <p className="video-note">Loading YouTube player...</p>}
-        </div>
-      )}
+        )}
 
-      {source !== 'youtube' && useIframeFallback && parsed?.type === 'drive' && (
-        <div className="video-wrap">
+        {usingIframeFallback && (
           <iframe
             src={parsed.previewUrl}
             allow="autoplay"
             allowFullScreen
             className="video-iframe"
-            title="Drive video"
+            title="Video"
           />
-        </div>
-      )}
+        )}
 
-      {source !== 'youtube' && !(useIframeFallback && parsed?.type === 'drive') && (
-        <div className="video-wrap" onClickCapture={handleFirstInteraction}>
+        {source !== 'youtube' && !usingIframeFallback && (
           <video
             ref={html5.videoRef}
             src={parsed.playableUrl}
-            controls
             crossOrigin="anonymous"
             className="video-el"
-            onPlay={() => emitHtml5Playback('play')}
-            onPause={() => emitHtml5Playback('pause')}
+            onPlay={() => {
+              setIsPlaying(true);
+              emitHtml5Playback('play');
+            }}
+            onPause={() => {
+              setIsPlaying(false);
+              emitHtml5Playback('pause');
+            }}
             onSeeked={() => emitHtml5Playback('seek')}
             onError={() => {
               if (parsed.type === 'drive') {
@@ -178,43 +226,36 @@ export default function UnifiedPlayer({ roomId, videoUrl, videoType, initialTime
               }
             }}
           />
-        </div>
+        )}
+      </div>
+
+      {!usingIframeFallback && (
+        <PlayerControls
+          active={active}
+          isPlaying={isPlaying}
+          onTogglePlay={handleTogglePlay}
+          onSeek={handleSeek}
+          volumeSlider={{
+            gain: source === 'youtube' ? 1 : gain,
+            setGain: source === 'youtube' ? setYoutubeVolume : setGain,
+            gainPercent: source === 'youtube' ? 100 : gainPercent,
+            muted,
+            toggleMute,
+            maxGain: source === 'youtube' ? 1 : maxGain,
+            available: true,
+          }}
+        />
       )}
 
       {loadError && <p className="video-error">{loadError}</p>}
-
-      {source === 'youtube' && (
-        <p className="video-note">
-          YouTube playback goes through YouTube's own player — volume boost above 100% isn't
-          available here (YouTube doesn't expose raw audio to embedded players). Play, pause,
-          and seek stay in sync with everyone in the room.
-        </p>
-      )}
-      {source !== 'youtube' && useIframeFallback && (
+      {usingIframeFallback && (
         <p className="video-note">
           Playing via Google Drive preview (direct playback wasn't available for this file —
-          make sure it's shared as "Anyone with the link can view"). Volume boost and tight sync
-          aren't available in this fallback mode.
+          make sure it's shared as "Anyone with the link can view"). Sync and volume boost
+          aren't available in this fallback mode; use Drive's own controls.
         </p>
-      )}
-
-      {volumeBoostAvailable && (
-        <div className="volume-boost-panel">
-          <label>
-            Volume: {muted ? 'Muted' : `${gainPercent}%`}
-            <input
-              type="range"
-              min="0"
-              max={maxGain}
-              step="0.05"
-              value={muted ? 0 : gain}
-              onChange={(e) => setGain(parseFloat(e.target.value))}
-            />
-          </label>
-          <button onClick={toggleMute}>{muted ? 'Unmute' : 'Mute'}</button>
-          <span className="boost-hint">Drag past 100% to boost above normal max volume</span>
-        </div>
       )}
     </div>
   );
 }
+

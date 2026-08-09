@@ -199,8 +199,18 @@ input:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 }
 .video-error { color: #ff7a7a; }
 
-.player-shell { display: flex; flex-direction: column; gap: 0; flex-shrink: 0; }
-.youtube-wrap { display: flex; flex-direction: column; }
+.player-shell {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  flex-shrink: 0;
+  background: #000;
+  border-radius: var(--radius);
+  overflow: hidden;
+}
+.player-shell .video-wrap {
+  border-radius: 0;
+}
 .youtube-iframe-target {
   width: 100%;
   aspect-ratio: 16 / 9;
@@ -210,25 +220,69 @@ input:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
   height: 100%;
   border: none;
   display: block;
+  pointer-events: none; /* clicks go through our own control bar, not YouTube's */
 }
 
-.volume-boost-panel {
+/* ---------- Unified control bar (same for youtube/drive/direct) ---------- */
+.player-controls {
   display: flex;
   align-items: center;
-  gap: 12px;
-  padding: 10px 12px;
+  gap: 10px;
+  padding: 8px 12px;
   background: var(--bg-elevated);
-  flex-wrap: wrap;
+  border-top: 1px solid var(--border);
 }
-.volume-boost-panel label {
+.pc-play-btn {
+  flex-shrink: 0;
+  width: 34px;
+  height: 34px;
+  padding: 0;
   display: flex;
   align-items: center;
-  gap: 8px;
+  justify-content: center;
   font-size: 13px;
-  color: var(--text-dim);
+  border-radius: 8px;
 }
-.volume-boost-panel input[type="range"] { width: 140px; accent-color: var(--accent); }
-.boost-hint { font-size: 12px; color: var(--text-dim); opacity: 0.7; }
+.pc-time {
+  font-size: 12px;
+  color: var(--text-dim);
+  flex-shrink: 0;
+  font-variant-numeric: tabular-nums;
+  min-width: 34px;
+}
+.pc-seek {
+  flex: 1;
+  min-width: 60px;
+  height: 4px;
+  accent-color: var(--accent);
+}
+.pc-volume {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+}
+.pc-mute-btn {
+  padding: 6px 8px;
+  font-size: 13px;
+  border-radius: 8px;
+}
+.pc-volume-slider {
+  width: 80px;
+  height: 4px;
+  accent-color: var(--accent);
+}
+.pc-volume-pct {
+  font-size: 11px;
+  color: var(--text-dim);
+  min-width: 32px;
+  flex-shrink: 0;
+}
+
+@media (max-width: 800px) {
+  .pc-volume-slider { width: 56px; }
+  .pc-time { display: none; }
+}
 
 .url-form { display: flex; gap: 8px; flex-shrink: 0; }
 .url-form input { flex: 1; }
