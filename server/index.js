@@ -125,6 +125,7 @@ io.on('connection', (socket) => {
       type,
       currentTime,
       from: socket.id,
+      serverTime: Date.now(),
     });
   });
 

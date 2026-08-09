@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { socket, connectSocket } from '../lib/socket';
-import VideoPlayer from './VideoPlayer';
+import UnifiedPlayer from './UnifiedPlayer';
 import Chat from './Chat';
 import CallPanel from './CallPanel';
 import { detectVideoType } from '../lib/videoUrl';
@@ -103,7 +103,7 @@ export default function Room({ roomId, name, onLeave }) {
 
       <div className="room-body">
         <main className="room-main">
-          <VideoPlayer
+          <UnifiedPlayer
             roomId={roomId}
             videoUrl={videoState.videoUrl}
             videoType={videoState.videoType}
