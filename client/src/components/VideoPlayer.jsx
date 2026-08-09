@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, useCallback } from 'react';
 import { parseVideoUrl } from '../lib/videoUrl';
 import { useVolumeBoost } from '../lib/useVolumeBoost';
 import { socket } from '../lib/socket';
+import YouTubePlayer from './YouTubePlayer';
 
 const SYNC_TOLERANCE = 0.75; // seconds of drift allowed before force-resync
 const RESYNC_INTERVAL = 5000;
@@ -106,8 +107,19 @@ export default function VideoPlayer({ roomId, videoUrl, videoType, initialTime, 
   if (!videoUrl) {
     return (
       <div className="video-empty">
-        <p>No video loaded yet. Paste a Google Drive link or a direct video URL below.</p>
+        <p>No video loaded yet. Paste a YouTube link, Google Drive link, or a direct video URL below.</p>
       </div>
+    );
+  }
+
+  if (parsed?.type === 'youtube') {
+    return (
+      <YouTubePlayer
+        roomId={roomId}
+        videoId={parsed.videoId}
+        initialTime={initialTime}
+        initialPlaying={initialPlaying}
+      />
     );
   }
 

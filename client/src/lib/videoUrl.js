@@ -1,10 +1,23 @@
 // Parses a pasted URL and figures out how to play it.
 // Supports:
+//  - YouTube links (youtube.com/watch, youtu.be, shorts)
 //  - Google Drive share links (various formats)
 //  - Direct video file URLs (.mp4, .webm, .ogg, .mov, m3u8)
 
 export function parseVideoUrl(rawUrl) {
   const url = rawUrl.trim();
+
+  const youtubeMatch =
+    url.match(/(?:youtube\.com\/watch\?v=|youtube\.com\/shorts\/|youtu\.be\/|youtube\.com\/embed\/)([a-zA-Z0-9_-]{11})/);
+
+  if (youtubeMatch) {
+    return {
+      type: 'youtube',
+      videoId: youtubeMatch[1],
+      playableUrl: null,
+      previewUrl: null,
+    };
+  }
 
   const driveMatch =
     url.match(/drive\.google\.com\/file\/d\/([a-zA-Z0-9_-]+)/) ||
@@ -34,8 +47,6 @@ export function parseVideoUrl(rawUrl) {
   };
 }
 
-export function isLikelyPlayableDirectly(parsed) {
-  // We optimistically try <video> tag first for both types; the player
-  // component falls back to iframe for drive links if the <video> errors out.
-  return true;
+export function detectVideoType(rawUrl) {
+  return parseVideoUrl(rawUrl).type; // 'youtube' | 'drive' | 'direct'
 }

@@ -3,6 +3,7 @@ import { socket, connectSocket } from '../lib/socket';
 import VideoPlayer from './VideoPlayer';
 import Chat from './Chat';
 import CallPanel from './CallPanel';
+import { detectVideoType } from '../lib/videoUrl';
 
 export default function Room({ roomId, name, onLeave }) {
   const [videoState, setVideoState] = useState({
@@ -70,7 +71,7 @@ export default function Room({ roomId, name, onLeave }) {
   const loadVideo = (e) => {
     e.preventDefault();
     if (!urlInput.trim()) return;
-    const videoType = urlInput.includes('drive.google.com') ? 'drive' : 'direct';
+    const videoType = detectVideoType(urlInput.trim());
     socket.emit('set-video', { roomId, videoUrl: urlInput.trim(), videoType });
     setUrlInput('');
   };
@@ -111,7 +112,7 @@ export default function Room({ roomId, name, onLeave }) {
           />
           <form onSubmit={loadVideo} className="url-form">
             <input
-              placeholder="Paste Google Drive link or direct video URL..."
+              placeholder="Paste YouTube link, Google Drive link, or direct video URL..."
               value={urlInput}
               onChange={(e) => setUrlInput(e.target.value)}
             />

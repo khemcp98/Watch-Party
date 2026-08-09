@@ -199,6 +199,18 @@ input:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 }
 .video-error { color: #ff7a7a; }
 
+.youtube-wrap { display: flex; flex-direction: column; }
+.youtube-iframe-target {
+  width: 100%;
+  aspect-ratio: 16 / 9;
+}
+.youtube-iframe-target iframe {
+  width: 100%;
+  height: 100%;
+  border: none;
+  display: block;
+}
+
 .volume-boost-panel {
   display: flex;
   align-items: center;
